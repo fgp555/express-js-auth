@@ -33,6 +33,8 @@ function authenticateToken(req, res, next) {
   next();
 }
 
+app.get("/", (req, res) => res.send("✅ Server running!"));
+
 // ✅ Obtener todos los usuarios (sin contraseñas)
 app.get("/api/users", authenticateToken, (req, res) => {
   const sanitizedUsers = users.map(({ password, ...user }) => user);
