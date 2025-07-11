@@ -9,33 +9,32 @@ app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json());
 
-// 🔐 Usuarios mock (usando email)
+// 🔐 Usuarios mock (con name, email, password, role)
 const users = [
-  { id: 1, email: "admin@example.com", password: "123456", role: "admin" },
-  { id: 2, email: "user@example.com", password: "abcdef", role: "user" },
+  { id: 1, name: "Admin User", email: "admin@example.com", password: "123456", role: "admin" },
+  { id: 2, name: "Regular User", email: "user@example.com", password: "abcdef", role: "user" },
 ];
 
-// 🎯 Token mock
+// 🎯 Token mock (como si fuera JWT)
 const MOCK_TOKEN = "mocked.token.123456";
 
 // 🔐 Middleware para proteger rutas
 function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
-
   if (!token || token !== MOCK_TOKEN) {
     return res.status(401).json({
       success: false,
       message: "Unauthorized: Invalid or missing token",
     });
   }
-
   next();
 }
 
+// ✅ Ruta base
 app.get("/", (req, res) => res.send("✅ Server running!"));
 
-// ✅ Obtener todos los usuarios (sin contraseñas)
+// 📄 Obtener todos los usuarios (sin contraseñas)
 app.get("/api/users", authenticateToken, (req, res) => {
   const sanitizedUsers = users.map(({ password, ...user }) => user);
   res.json({
@@ -44,12 +43,11 @@ app.get("/api/users", authenticateToken, (req, res) => {
   });
 });
 
-// 🟢 Login
+// 🔐 Login
 app.post("/api/auth/login", (req, res) => {
   const { email, password } = req.body;
 
   const user = users.find((u) => u.email === email && u.password === password);
-
   if (user) {
     res.json({
       success: true,
@@ -57,6 +55,7 @@ app.post("/api/auth/login", (req, res) => {
       token: MOCK_TOKEN,
       user: {
         id: user.id,
+        name: user.name,
         email: user.email,
         role: user.role,
       },
@@ -69,14 +68,14 @@ app.post("/api/auth/login", (req, res) => {
   }
 });
 
-// 🆕 Registro
+// 📝 Registro
 app.post("/api/auth/register", (req, res) => {
-  const { email, password, role = "user" } = req.body;
+  const { name, email, password, role = "user" } = req.body;
 
-  if (!email || !password) {
+  if (!name || !email || !password) {
     return res.status(400).json({
       success: false,
-      message: "Email and password are required",
+      message: "Name, email and password are required",
     });
   }
 
@@ -90,6 +89,7 @@ app.post("/api/auth/register", (req, res) => {
 
   const newUser = {
     id: users.length + 1,
+    name,
     email,
     password,
     role,
@@ -103,17 +103,18 @@ app.post("/api/auth/register", (req, res) => {
     token: MOCK_TOKEN,
     user: {
       id: newUser.id,
+      name: newUser.name,
       email: newUser.email,
       role: newUser.role,
     },
   });
 });
 
-// ❌ Eliminar usuario por ID (requiere token)
+// ❌ Eliminar usuario por ID
 app.delete("/api/users/:id", authenticateToken, (req, res) => {
   const userId = parseInt(req.params.id);
-
   const index = users.findIndex((u) => u.id === userId);
+
   if (index === -1) {
     return res.status(404).json({
       success: false,
@@ -121,7 +122,6 @@ app.delete("/api/users/:id", authenticateToken, (req, res) => {
     });
   }
 
-  // Eliminar del array
   const deletedUser = users.splice(index, 1)[0];
 
   res.json({
@@ -129,6 +129,7 @@ app.delete("/api/users/:id", authenticateToken, (req, res) => {
     message: "User deleted successfully",
     user: {
       id: deletedUser.id,
+      name: deletedUser.name,
       email: deletedUser.email,
       role: deletedUser.role,
     },
