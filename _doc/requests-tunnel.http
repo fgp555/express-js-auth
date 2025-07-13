@@ -1,0 +1,28 @@
+### 📄 GET ALL USERS
+GET https://back.fgp.one/api/users
+Authorization: Bearer mocked.token.123456
+Content-Type: application/json
+
+### 🔐 LOGIN
+POST https://back.fgp.one/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@example.com",
+  "password": "123456"
+}
+
+### 📝 REGISTER
+POST https://back.fgp.one/api/auth/register
+Content-Type: application/json
+
+{
+  "name": "John Doe",
+  "email": "johndoe@example.com",
+  "password": "mypass123"
+}
+
+### ❌ DELETE USER BY ID
+DELETE https://back.fgp.one/api/users/1
+Authorization: Bearer mocked.token.123456
+Content-Type: application/json
