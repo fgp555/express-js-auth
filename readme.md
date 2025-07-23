@@ -9,7 +9,7 @@
 ## 📦 Installation
 
 ```bash
-git clone https://github.com/fgp555/express-js-login.git
+git clone https://github.com/fgp555/express-js-auth.git
 cd express-js-login
 npm install
 ```

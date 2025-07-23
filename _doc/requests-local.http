@@ -1,9 +1,8 @@
-### 📄 GET ALL USERS
-GET http://localhost:3000/api/users
-Authorization: Bearer mocked.token.123456
-Content-Type: application/json
-
 ### 🔐 LOGIN
+# @name postLogin
+@accessToken={{postLogin.response.body.accessToken}}
+@refreshToken={{postLogin.response.body.refreshToken}}
+
 POST http://localhost:3000/api/auth/login
 Content-Type: application/json
 
@@ -12,7 +11,20 @@ Content-Type: application/json
   "password": "123456"
 }
 
-### 📝 REGISTER
+### 🔍 DECODE JWT (accessToken o refreshToken)
+POST http://localhost:3000/api/auth/decode
+Content-Type: application/json
+
+{
+  "token": "{{accessToken}}"
+}
+
+### 📄 GET ALL USERS (PROTECTED)
+GET http://localhost:3000/api/users
+Authorization: Bearer {{accessToken}}
+Content-Type: application/json
+
+### 📝 REGISTER NEW USER
 POST http://localhost:3000/api/auth/register
 Content-Type: application/json
 
@@ -22,7 +34,26 @@ Content-Type: application/json
   "password": "mypass123"
 }
 
-### ❌ DELETE USER BY ID
+### ❌ DELETE USER BY ID (PROTECTED)
 DELETE http://localhost:3000/api/users/1
-Authorization: Bearer mocked.token.123456
+Authorization: Bearer {{accessToken}}
 Content-Type: application/json
+
+### 🔁 REFRESH ACCESS TOKEN
+# @name refreshAccess
+@newAccessToken={{refreshAccess.response.body.accessToken}}
+
+POST http://localhost:3000/api/auth/refresh-token
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
+
+### 🔐 LOGOUT
+POST http://localhost:3000/api/auth/logout
+Content-Type: application/json
+
+{
+  "refreshToken": "{{refreshToken}}"
+}
