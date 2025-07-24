@@ -10,31 +10,33 @@ app.use(cors());
 app.use(morgan("dev"));
 app.use(express.json());
 
-const JWT_SECRET = "my_secret_access";
-const JWT_REFRESH_SECRET = "my_secret_refresh";
-const EXPIRES_IN = "15m";
-const REFRESH_EXPIRES_IN = "7d";
+const JWT_SECRET = "JWT_SECRET";
+const JWT_REFRESH_SECRET = "REFRESH_SECRET";
+const EXPIRES_IN = "1h";
+const REFRESH_EXPIRES_IN = "3d";
 
+// 📦 Usuarios (con _id como string)
 const users = [
-  { id: 1, name: "Admin User", email: "admin@example.com", password: "123456", role: "admin" },
-  { id: 2, name: "Regular User", email: "user@example.com", password: "abcdef", role: "user" },
+  { _id: "1", name: "Admin User", email: "admin@gmail.com", password: "admin@gmail.com", role: "admin" },
+  { _id: "2", name: "Regular User", email: "user@gmail.com", password: "user@gmail.com", role: "user" },
 ];
 
-// 🛡️ Lista temporal de refreshTokens
 let refreshTokens = [];
 
-// 🛠 Función para generar tokens
+// 🔐 Tokens
 function generateAccessToken(user) {
-  return jwt.sign({ id: user.id, role: user.role }, JWT_SECRET, { expiresIn: EXPIRES_IN });
+  return jwt.sign({ _id: user._id, role: user.role }, JWT_SECRET, { expiresIn: EXPIRES_IN });
 }
 
 function generateRefreshToken(user) {
-  const refreshToken = jwt.sign({ id: user.id }, JWT_REFRESH_SECRET, { expiresIn: REFRESH_EXPIRES_IN });
+  const refreshToken = jwt.sign({ _id: user._id, role: user.role }, JWT_REFRESH_SECRET, {
+    expiresIn: REFRESH_EXPIRES_IN,
+  });
   refreshTokens.push(refreshToken);
   return refreshToken;
 }
 
-// 🔐 Middleware
+// 🔒 Middleware
 function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
@@ -47,7 +49,7 @@ function authenticateToken(req, res, next) {
   });
 }
 
-// 🏁 Ruta base
+// ✅ Home
 app.get("/", (req, res) => res.send("✅ Server running!"));
 
 // 🔑 Login
@@ -64,11 +66,16 @@ app.post("/api/auth/login", (req, res) => {
     message: "Login successful",
     accessToken,
     refreshToken,
-    user: { id: user.id, name: user.name, email: user.email, role: user.role },
+    user: {
+      _id: user._id,
+      name: user.name,
+      email: user.email,
+      role: user.role,
+    },
   });
 });
 
-// 🔁 Refresh Token
+// 🔁 Refresh token
 app.post("/api/auth/refresh-token", (req, res) => {
   const { refreshToken } = req.body;
   if (!refreshToken || !refreshTokens.includes(refreshToken)) {
@@ -78,22 +85,52 @@ app.post("/api/auth/refresh-token", (req, res) => {
   jwt.verify(refreshToken, JWT_REFRESH_SECRET, (err, user) => {
     if (err) return res.status(403).json({ success: false, message: "Token expired" });
 
-    const accessToken = generateAccessToken({ id: user.id, role: user.role });
-    res.json({ success: true, accessToken });
+    const accessToken = generateAccessToken({ _id: user._id, role: user.role });
+    res.json({ success: true, accessToken, expiresIn: EXPIRES_IN });
   });
 });
 
-// 🔒 Logout (opcional)
+// 🔒 Logout
 app.post("/api/auth/logout", (req, res) => {
   const { refreshToken } = req.body;
-  refreshTokens = refreshTokens.filter((token) => token !== refreshToken);
-  res.json({ success: true, message: "Logged out successfully" });
+  jwt.verify(refreshToken, JWT_REFRESH_SECRET, (err) => {
+    if (err) return res.status(403).json({ success: false, message: "Invalid refresh token" });
+
+    refreshTokens = refreshTokens.filter((token) => token !== refreshToken);
+    return res.json({ success: true, message: "Logged out successfully" });
+  });
 });
 
-// 📋 Usuarios (protegido)
-app.get("/api/users", authenticateToken, (req, res) => {
-  const sanitizedUsers = users.map(({ password, ...u }) => u);
-  res.json({ success: true, users: sanitizedUsers });
+// 📋 Obtener usuarios
+app.get("/api/users/findAll", authenticateToken, (req, res) => {
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 10;
+  const startIndex = (page - 1) * limit;
+  const endIndex = startIndex + limit;
+
+  const sanitizedUsers = users.map(({ password, ...rest }) => rest);
+
+  const paginatedResults = sanitizedUsers.slice(startIndex, endIndex);
+  const totalItems = sanitizedUsers.length;
+  const totalPages = Math.ceil(totalItems / limit);
+  const hasMore = page < totalPages;
+
+  res.json({
+    page,
+    totalPages,
+    totalItems,
+    hasMore,
+    results: paginatedResults,
+  });
+});
+
+// 📌 Obtener perfil actual
+app.get("/api/auth/me", authenticateToken, (req, res) => {
+  const user = users.find((u) => u._id === req.user._id);
+  if (!user) return res.status(404).json({ success: false, message: "User not found" });
+
+  const { password, ...safeUser } = user;
+  res.json({ success: true, user: safeUser });
 });
 
 // 📝 Registro
@@ -106,7 +143,14 @@ app.post("/api/auth/register", (req, res) => {
   const exists = users.find((u) => u.email === email);
   if (exists) return res.status(409).json({ success: false, message: "Email already exists" });
 
-  const newUser = { id: users.length + 1, name, email, password, role };
+  const newUser = {
+    _id: (users.length + 1).toString(),
+    name,
+    email,
+    password,
+    role,
+  };
+
   users.push(newUser);
 
   const accessToken = generateAccessToken(newUser);
@@ -117,12 +161,17 @@ app.post("/api/auth/register", (req, res) => {
     message: "User registered",
     accessToken,
     refreshToken,
-    user: { id: newUser.id, name: newUser.name, email: newUser.email, role: newUser.role },
+    user: {
+      _id: newUser._id,
+      name: newUser.name,
+      email: newUser.email,
+      role: newUser.role,
+    },
   });
 });
 
-// 📦 Decodificar un JWT y mostrar iat/exp legibles
-app.post("/api/auth/decode", (req, res) => {
+// 🔍 Decodificar token
+app.post("/api/auth/decode-token", (req, res) => {
   const { token } = req.body;
   if (!token) {
     return res.status(400).json({
@@ -140,12 +189,12 @@ app.post("/api/auth/decode", (req, res) => {
       });
     }
 
-    // Convertir iat y exp a formato humano (si existen)
     const { payload } = decoded;
     const payloadHumanReadable = {
       ...payload,
-      iat_human: payload.iat ? new Date(payload.iat * 1000).toISOString() : null,
-      exp_human: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+      iat___human: payload.iat ? new Date(payload.iat * 1000).toISOString() : null,
+      exp___human: payload.exp ? new Date(payload.exp * 1000).toISOString() : null,
+      currentTime: new Date().toISOString(),
     };
 
     res.json({
@@ -165,16 +214,26 @@ app.post("/api/auth/decode", (req, res) => {
 });
 
 // ❌ Eliminar usuario
-app.delete("/api/users/:id", authenticateToken, (req, res) => {
-  const userId = parseInt(req.params.id);
-  const index = users.findIndex((u) => u.id === userId);
+app.delete("/api/users/remove/:id", authenticateToken, (req, res) => {
+  const requestingUser = users.find((u) => u._id === req.user._id);
+  if (!requestingUser) {
+    return res.status(401).json({ success: false, message: "Authenticated user not found" });
+  }
+
+  if (requestingUser.role !== "admin") {
+    return res.status(403).json({ success: false, message: "Only admins can delete users" });
+  }
+
+  const userId = req.params.id; // 👈 ahora es string
+  const index = users.findIndex((u) => u._id === userId);
   if (index === -1) return res.status(404).json({ success: false, message: "User not found" });
 
   const deletedUser = users.splice(index, 1)[0];
+  const { password, ...safeDeleted } = deletedUser;
   res.json({
     success: true,
     message: "User deleted",
-    user: { id: deletedUser.id, name: deletedUser.name, email: deletedUser.email, role: deletedUser.role },
+    user: safeDeleted,
   });
 });
 
