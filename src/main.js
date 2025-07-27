@@ -1,31 +1,62 @@
+// 🔧 Configuración inicial
+require("dotenv").config();
 const express = require("express");
 const morgan = require("morgan");
 const cors = require("cors");
+const session = require("express-session");
+const passport = require("passport");
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const jwt = require("jsonwebtoken");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+// 🔐 Variables de entorno
+const JWT_SECRET = process.env.JWT_SECRET;
+const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET;
+const EXPIRES_IN = "5s";
+const REFRESH_EXPIRES_IN = "10s";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL || "http://localhost:3000/api/oauth/callback";
+const GOOGLE_CLIENT_URL = process.env.GOOGLE_CLIENT_URL;
+
+// 🧩 Middlewares
 app.use(morgan("dev"));
+app.use(cors());
 app.use(express.json());
+app.use(session({ secret: "session-secret", resave: false, saveUninitialized: false }));
+app.use(passport.initialize());
+app.use(passport.session());
+app.use(express.static("public")); // para servir index.html
 
-const JWT_SECRET = "JWT_SECRET";
-const JWT_REFRESH_SECRET = "REFRESH_SECRET";
-const EXPIRES_IN = "1h";
-const REFRESH_EXPIRES_IN = "3d";
-
-// 📦 Usuarios (con _id como string)
+// 🧍 Usuarios simulados
 const users = [
-  { _id: "1", name: "Admin User", email: "admin@gmail.com", password: "admin@gmail.com", role: "admin" },
-  { _id: "2", name: "Regular User", email: "user@gmail.com", password: "user@gmail.com", role: "user" },
+  {
+    _id: "1",
+    name: "Admin User",
+    username: "admin",
+    email: "admin@gmail.com",
+    password: "admin@gmail.com",
+    role: "admin",
+  },
+  {
+    _id: "2",
+    name: "Regular User",
+    username: "user",
+    email: "user@gmail.com",
+    password: "user@gmail.com",
+    role: "user",
+  },
 ];
 
 let refreshTokens = [];
 
-// 🔐 Tokens
+// 🔐 Funciones JWT
 function generateAccessToken(user) {
-  return jwt.sign({ _id: user._id, role: user.role }, JWT_SECRET, { expiresIn: EXPIRES_IN });
+  return jwt.sign({ _id: user._id, role: user.role, email: user.email, name: user.name, sub: user._id }, JWT_SECRET, {
+    expiresIn: EXPIRES_IN,
+  });
 }
 
 function generateRefreshToken(user) {
@@ -36,7 +67,6 @@ function generateRefreshToken(user) {
   return refreshToken;
 }
 
-// 🔒 Middleware
 function authenticateToken(req, res, next) {
   const authHeader = req.headers["authorization"];
   const token = authHeader && authHeader.split(" ")[1];
@@ -49,8 +79,31 @@ function authenticateToken(req, res, next) {
   });
 }
 
+// 🔐 Configurar Passport Google OAuth
+passport.serializeUser((user, done) => done(null, user));
+passport.deserializeUser((obj, done) => done(null, obj));
+
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: GOOGLE_CLIENT_ID,
+      clientSecret: GOOGLE_CLIENT_SECRET,
+      callbackURL: GOOGLE_CALLBACK_URL,
+    },
+    (accessToken, refreshToken, profile, done) => {
+      const user = {
+        _id: profile.id,
+        name: profile.displayName,
+        email: profile.emails?.[0]?.value || "",
+        role: "user",
+      };
+      return done(null, user);
+    }
+  )
+);
+
 // ✅ Home
-app.get("/", (req, res) => res.send("✅ Server running!"));
+app.get("/hello", (req, res) => res.send("✅ Server running!"));
 
 // 🔑 Login
 app.post("/api/auth/login", (req, res) => {
@@ -77,8 +130,9 @@ app.post("/api/auth/login", (req, res) => {
 
 // 🔁 Refresh token
 app.post("/api/auth/refresh-token", (req, res) => {
-  const { refreshToken } = req.body;
-  if (!refreshToken || !refreshTokens.includes(refreshToken)) {
+  const refreshToken = req.body.refreshToken;
+
+  if (!refreshToken) {
     return res.status(403).json({ success: false, message: "Invalid refresh token" });
   }
 
@@ -92,13 +146,14 @@ app.post("/api/auth/refresh-token", (req, res) => {
 
 // 🔒 Logout
 app.post("/api/auth/logout", (req, res) => {
-  const { refreshToken } = req.body;
-  jwt.verify(refreshToken, JWT_REFRESH_SECRET, (err) => {
-    if (err) return res.status(403).json({ success: false, message: "Invalid refresh token" });
+  const refreshToken = req.body.refreshToken;
+  if (!refreshToken) {
+    return res.status(403).json({ success: false, message: "Invalid refresh token" });
+  }
 
-    refreshTokens = refreshTokens.filter((token) => token !== refreshToken);
-    return res.json({ success: true, message: "Logged out successfully" });
-  });
+  refreshTokens = refreshTokens.filter((token) => token !== refreshToken);
+
+  res.json({ success: true, message: "Logged out successfully" });
 });
 
 // 📋 Obtener usuarios
@@ -237,6 +292,43 @@ app.delete("/api/users/remove/:id", authenticateToken, (req, res) => {
   });
 });
 
+app.get("/api/auth/check-existence", (req, res) => {
+  const { email, username } = req.query;
+
+  if (!email && !username) {
+    return res.status(400).json({
+      success: false,
+      message: "You must provide either email or username to check.",
+    });
+  }
+
+  const emailExists = email ? users.some((u) => u.email === email) : false;
+  const usernameExists = username ? users.some((u) => u.username === username) : false;
+
+  res.json({
+    success: true,
+    emailExists,
+    usernameExists,
+  });
+});
+
+// 🔐 Google OAuth login
+app.get("/api/oauth/login", passport.authenticate("google", { scope: ["profile", "email"] }));
+
+// 🔁 Google OAuth callback
+app.get("/api/oauth/callback", passport.authenticate("google", { failureRedirect: "/index.html" }), (req, res) => {
+  const user = req.user;
+  const accessToken = generateAccessToken(user);
+  const refreshToken = generateRefreshToken(user);
+
+  if (GOOGLE_CLIENT_URL) {
+    res.redirect(GOOGLE_CLIENT_URL + `/auth/login-google?accessToken=${accessToken}&refreshToken=${refreshToken}`);
+  } else {
+    res.redirect(`/index.html?accessToken=${accessToken}`);
+  }
+});
+
+// 🚀 Iniciar servidor
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
 });
