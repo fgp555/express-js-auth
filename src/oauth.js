@@ -1,7 +1,12 @@
 // 🔧 Configuración inicial
+
+require("dotenv").config();
 const express = require("express");
 const morgan = require("morgan");
 const cors = require("cors");
+const session = require("express-session");
+const passport = require("passport");
+const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const jwt = require("jsonwebtoken");
 
 const app = express();
@@ -12,11 +17,18 @@ const JWT_SECRET = process.env.JWT_SECRET || "secret";
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "refresh-secret";
 const EXPIRES_IN = "5s";
 const REFRESH_EXPIRES_IN = "10s";
+const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
+const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
+const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL || "http://localhost:3000/api/oauth/callback";
+const GOOGLE_CLIENT_URL = process.env.GOOGLE_CLIENT_URL;
 
 // 🧩 Middlewares
 app.use(morgan("dev"));
 app.use(cors());
 app.use(express.json());
+app.use(session({ secret: "session-secret", resave: false, saveUninitialized: false }));
+app.use(passport.initialize());
+app.use(passport.session());
 app.use(express.static("public")); // para servir index.html
 
 // 🧍 Usuarios simulados
@@ -67,6 +79,29 @@ function authenticateToken(req, res, next) {
     next();
   });
 }
+
+// 🔐 Configurar Passport Google OAuth
+passport.serializeUser((user, done) => done(null, user));
+passport.deserializeUser((obj, done) => done(null, obj));
+
+passport.use(
+  new GoogleStrategy(
+    {
+      clientID: GOOGLE_CLIENT_ID,
+      clientSecret: GOOGLE_CLIENT_SECRET,
+      callbackURL: GOOGLE_CALLBACK_URL,
+    },
+    (accessToken, refreshToken, profile, done) => {
+      const user = {
+        _id: profile.id,
+        name: profile.displayName,
+        email: profile.emails?.[0]?.value || "",
+        role: "user",
+      };
+      return done(null, user);
+    }
+  )
+);
 
 // ✅ Home
 app.get("/hello", (req, res) => res.send("✅ Server running!"));
@@ -276,6 +311,22 @@ app.get("/api/auth/check-existence", (req, res) => {
     emailExists,
     usernameExists,
   });
+});
+
+// 🔐 Google OAuth login
+app.get("/api/oauth/login", passport.authenticate("google", { scope: ["profile", "email"] }));
+
+// 🔁 Google OAuth callback
+app.get("/api/oauth/callback", passport.authenticate("google", { failureRedirect: "/index.html" }), (req, res) => {
+  const user = req.user;
+  const accessToken = generateAccessToken(user);
+  const refreshToken = generateRefreshToken(user);
+
+  if (GOOGLE_CLIENT_URL) {
+    res.redirect(GOOGLE_CLIENT_URL + `/auth/login-google?accessToken=${accessToken}&refreshToken=${refreshToken}`);
+  } else {
+    res.redirect(`/index.html?accessToken=${accessToken}`);
+  }
 });
 
 // 🚀 Iniciar servidor
