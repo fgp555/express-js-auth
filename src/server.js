@@ -6,7 +6,6 @@ const morgan = require("morgan");
 const cors = require("cors");
 const session = require("express-session");
 const passport = require("passport");
-const GoogleStrategy = require("passport-google-oauth20").Strategy;
 const jwt = require("jsonwebtoken");
 
 const app = express();
@@ -15,8 +14,11 @@ const PORT = process.env.PORT || 3000;
 // 🔐 Variables de entorno
 const JWT_SECRET = process.env.JWT_SECRET || "secret";
 const JWT_REFRESH_SECRET = process.env.JWT_REFRESH_SECRET || "refresh-secret";
-const EXPIRES_IN = "5s";
-const REFRESH_EXPIRES_IN = "10s";
+const EXPIRES_IN = "3d";
+const REFRESH_EXPIRES_IN = "7d";
+
+// 🔍 Variables de Google OAuth
+const GOOGLE_OAUTH_ENABLED = process.env.GOOGLE_OAUTH_ENABLED === "true";
 const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID;
 const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET;
 const GOOGLE_CALLBACK_URL = process.env.GOOGLE_CALLBACK_URL || "http://localhost:3000/api/oauth/callback";
@@ -26,10 +28,56 @@ const GOOGLE_CLIENT_URL = process.env.GOOGLE_CLIENT_URL;
 app.use(morgan("dev"));
 app.use(cors());
 app.use(express.json());
-app.use(session({ secret: "session-secret", resave: false, saveUninitialized: false }));
-app.use(passport.initialize());
-app.use(passport.session());
 app.use(express.static("public")); // para servir index.html
+
+// 🔐 Configurar Passport solo si Google OAuth está habilitado
+if (GOOGLE_OAUTH_ENABLED) {
+  console.log("🔐 Google OAuth is ENABLED");
+
+  // Validar que las credenciales de Google estén configuradas
+  if (!GOOGLE_CLIENT_ID || !GOOGLE_CLIENT_SECRET) {
+    console.error("❌ Google OAuth is enabled but GOOGLE_CLIENT_ID or GOOGLE_CLIENT_SECRET are missing!");
+    process.exit(1);
+  }
+
+  const GoogleStrategy = require("passport-google-oauth20").Strategy;
+
+  app.use(
+    session({
+      secret: process.env.SESSION_SECRET || "session-secret",
+      resave: false,
+      saveUninitialized: false,
+    })
+  );
+  app.use(passport.initialize());
+  app.use(passport.session());
+
+  // Configurar serialización de Passport
+  passport.serializeUser((user, done) => done(null, user));
+  passport.deserializeUser((obj, done) => done(null, obj));
+
+  // Configurar Google Strategy
+  passport.use(
+    new GoogleStrategy(
+      {
+        clientID: GOOGLE_CLIENT_ID,
+        clientSecret: GOOGLE_CLIENT_SECRET,
+        callbackURL: GOOGLE_CALLBACK_URL,
+      },
+      (accessToken, refreshToken, profile, done) => {
+        const user = {
+          _id: profile.id,
+          name: profile.displayName,
+          email: profile.emails?.[0]?.value || "",
+          role: "user",
+        };
+        return done(null, user);
+      }
+    )
+  );
+} else {
+  console.log("🔒 Google OAuth is DISABLED");
+}
 
 // 🧍 Usuarios simulados
 const users = [
@@ -79,29 +127,6 @@ function authenticateToken(req, res, next) {
     next();
   });
 }
-
-// 🔐 Configurar Passport Google OAuth
-passport.serializeUser((user, done) => done(null, user));
-passport.deserializeUser((obj, done) => done(null, obj));
-
-passport.use(
-  new GoogleStrategy(
-    {
-      clientID: GOOGLE_CLIENT_ID,
-      clientSecret: GOOGLE_CLIENT_SECRET,
-      callbackURL: GOOGLE_CALLBACK_URL,
-    },
-    (accessToken, refreshToken, profile, done) => {
-      const user = {
-        _id: profile.id,
-        name: profile.displayName,
-        email: profile.emails?.[0]?.value || "",
-        role: "user",
-      };
-      return done(null, user);
-    }
-  )
-);
 
 // ✅ Home
 app.get("/hello", (req, res) => res.send("✅ Server running!"));
@@ -280,7 +305,7 @@ app.delete("/api/users/remove/:id", authenticateToken, (req, res) => {
     return res.status(403).json({ success: false, message: "Only admins can delete users" });
   }
 
-  const userId = req.params.id; // 👈 ahora es string
+  const userId = req.params.id;
   const index = users.findIndex((u) => u._id === userId);
   if (index === -1) return res.status(404).json({ success: false, message: "User not found" });
 
@@ -293,6 +318,7 @@ app.delete("/api/users/remove/:id", authenticateToken, (req, res) => {
   });
 });
 
+// 🔍 Verificar existencia de email/username
 app.get("/api/auth/check-existence", (req, res) => {
   const { email, username } = req.query;
 
@@ -313,23 +339,66 @@ app.get("/api/auth/check-existence", (req, res) => {
   });
 });
 
-// 🔐 Google OAuth login
-app.get("/api/oauth/login", passport.authenticate("google", { scope: ["profile", "email"] }));
-
-// 🔁 Google OAuth callback
-app.get("/api/oauth/callback", passport.authenticate("google", { failureRedirect: "/index.html" }), (req, res) => {
-  const user = req.user;
-  const accessToken = generateAccessToken(user);
-  const refreshToken = generateRefreshToken(user);
-
-  if (GOOGLE_CLIENT_URL) {
-    res.redirect(GOOGLE_CLIENT_URL + `/auth/login-google?accessToken=${accessToken}&refreshToken=${refreshToken}`);
-  } else {
-    res.redirect(`/index.html?accessToken=${accessToken}`);
-  }
+// 📊 Endpoint para obtener información del servidor
+app.get("/api/server/info", (req, res) => {
+  res.json({
+    success: true,
+    server: {
+      oauth: {
+        googleEnabled: GOOGLE_OAUTH_ENABLED,
+      },
+      endpoints: {
+        auth: ["/api/auth/login", "/api/auth/register", "/api/auth/logout"],
+        ...(GOOGLE_OAUTH_ENABLED && {
+          oauth: ["/api/oauth/login", "/api/oauth/callback"],
+        }),
+        users: ["/api/users/findAll", "/api/users/remove/:id"],
+        utils: ["/api/auth/decode-token", "/api/auth/check-existence"],
+      },
+    },
+  });
 });
+
+// 🔐 Google OAuth Routes (solo si está habilitado)
+if (GOOGLE_OAUTH_ENABLED) {
+  // Google OAuth login
+  app.get("/api/oauth/login", passport.authenticate("google", { scope: ["profile", "email"] }));
+
+  // Google OAuth callback
+  app.get("/api/oauth/callback", passport.authenticate("google", { failureRedirect: "/index.html" }), (req, res) => {
+    const user = req.user;
+    const accessToken = generateAccessToken(user);
+    const refreshToken = generateRefreshToken(user);
+
+    if (GOOGLE_CLIENT_URL) {
+      res.redirect(GOOGLE_CLIENT_URL + `/auth/login-google?accessToken=${accessToken}&refreshToken=${refreshToken}`);
+    } else {
+      res.redirect(`/index.html?accessToken=${accessToken}`);
+    }
+  });
+} else {
+  // Rutas de fallback cuando Google OAuth está deshabilitado
+  app.get("/api/oauth/login", (req, res) => {
+    res.status(503).json({
+      success: false,
+      message: "Google OAuth is disabled. Enable it by setting GOOGLE_OAUTH_ENABLED=true in your .env file",
+    });
+  });
+
+  app.get("/api/oauth/callback", (req, res) => {
+    res.status(503).json({
+      success: false,
+      message: "Google OAuth is disabled. Enable it by setting GOOGLE_OAUTH_ENABLED=true in your .env file",
+    });
+  });
+}
 
 // 🚀 Iniciar servidor
 app.listen(PORT, () => {
   console.log(`✅ Server running on http://localhost:${PORT}`);
+  console.log(`🔐 Google OAuth: ${GOOGLE_OAUTH_ENABLED ? "ENABLED" : "DISABLED"}`);
+  if (GOOGLE_OAUTH_ENABLED) {
+    console.log(`📍 Google OAuth Login: http://localhost:${PORT}/api/oauth/login`);
+    console.log(`📍 Google OAuth Callback: ${GOOGLE_CALLBACK_URL}`);
+  }
 });
